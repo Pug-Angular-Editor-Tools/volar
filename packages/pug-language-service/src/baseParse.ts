@@ -5,6 +5,7 @@ import { CodeGen } from '@volar/code-gen';
 import * as pugLex from 'pug-lexer';
 
 const pugParser = require('pug-parser');
+const voidElements = require('void-elements');
 
 export function baseParse(pugCode: string) {
 
@@ -23,29 +24,30 @@ export function baseParse(pugCode: string) {
 	let attrsBlocks: ReturnType<typeof collectAttrsBlocks>;
 	let ast: Node | undefined;
 
+    let contentfulIndents: pugLex.IndentToken[];
+    let emptyLineEndsLinePositions: number[];
+
 	try {
 		const tokens = pugLex(pugCode, { filename: fileName });
 
 		emptyLineEnds = collectEmptyLineEnds(tokens);
+        emptyLineEndsLinePositions = emptyLineEnds.map(offset => pugTextDocument.positionAt(offset).line);
+
 		attrsBlocks = collectAttrsBlocks(tokens);
+
+        contentfulIndents = collectContentfulIndents(tokens);
 
 		ast = pugParser(tokens, { filename: fileName, src: pugCode }) as Node;
 		visitNode(ast, undefined, undefined);
 
-		// support tag auto-complete in empty lines
-		for (const emptyLineEnd of emptyLineEnds) {
-			codeGen.addText('<');
-			codeGen.addCode(
-				'x__VLS_',
-				{
-					start: emptyLineEnd,
-					end: emptyLineEnd,
-				},
-				SourceMap.Mode.Totally,
-				{ isEmptyTagCompletion: true },
-			);
-			codeGen.addText(' />');
-		}
+        contentfulIndents.forEach(() => {
+            addIndents();
+            contentfulIndents.shift();
+        });
+        emptyLineEndsLinePositions.forEach(() => {
+            addNewlines();
+            emptyLineEndsLinePositions.shift();
+        });
 
 		codeGen.addCode(
 			'',
@@ -77,20 +79,76 @@ export function baseParse(pugCode: string) {
 		ast,
 	};
 
+    function addIndents() {
+        const startOffset = pugTextDocument.offsetAt({ line: contentfulIndents[0].loc.start.line, character: contentfulIndents[0].loc.start.column });
+        const endOffset = pugTextDocument.offsetAt({ line: contentfulIndents[0].loc.end.line, character: contentfulIndents[0].loc.end.column });
+        const htmlStartRange = codeGen.getText().length;
+
+        codeGen.addText('\n' + (' '.repeat(contentfulIndents[0].val || 0)));
+
+        const htmlEndRange = codeGen.getText().length;
+
+        codeGen.addMapping2({
+            data: undefined,
+            sourceRange: {
+                start: startOffset,
+                end: endOffset,
+            },
+            mappedRange: {
+                start: htmlStartRange,
+                end: htmlEndRange,
+            },
+            mode: SourceMap.Mode.Expand,
+        });
+    }
+    function addNewlines() {
+        const offset = getDocOffset(emptyLineEndsLinePositions[0] + 1, 0 + 1);
+        const htmlStartRange = codeGen.getText().length;
+
+        if (!(codeGen.getText().length === 0 || codeGen.getText().endsWith('\n'))) {
+            codeGen.addText('\n');
+        }
+        codeGen.addText('\n');
+
+        const htmlEndRange = codeGen.getText().length;
+
+        codeGen.addMapping2({
+            data: undefined,
+            sourceRange: {
+                start: offset,
+                end: offset,
+            },
+            mappedRange: {
+                start: htmlStartRange,
+                end: htmlEndRange,
+            },
+            mode: SourceMap.Mode.Expand,
+        });
+    }
 	function visitNode(node: Node, next: Node | undefined, parent: Node | undefined) {
 		if (node.type === 'Block') {
 			for (let i = 0; i < node.nodes.length; i++) {
 				visitNode(node.nodes[i], node.nodes[i + 1], node);
 			}
 		}
-		else if (node.type === 'Tag') {
+		// TODO: Merge into one array
+        while (node.line >= contentfulIndents[0]?.loc.start.line) {
+            addIndents();
+            contentfulIndents.shift();
+        }
+        while (node.line >= emptyLineEndsLinePositions[0]) {
+            addNewlines();
+            emptyLineEndsLinePositions.shift();
+        }
+
+		if (node.type === 'Tag') {
 
 			const pugTagRange = getDocRange(node.line, node.column, node.name.length);
 
 			const fullHtmlStart = codeGen.getText().length;
 			fullPugTagEnd = pugTagRange.end;
 
-			const selfClosing = node.block.nodes.length === 0;
+            const selfClosing = Boolean(voidElements[node.name]);
 			addStartTag(node, selfClosing);
 			if (!selfClosing) {
 				visitNode(node.block, next, parent);
@@ -192,15 +250,6 @@ export function baseParse(pugCode: string) {
 		}
 		if (nextStart !== undefined) {
 			fullPugTagEnd = nextStart;
-			codeGen.addCode(
-				'',
-				{
-					start: nextStart,
-					end: nextStart,
-				},
-				SourceMap.Mode.Totally,
-				undefined,
-			);
 		}
 		codeGen.addText(`</${node.name}>`);
 	}
@@ -223,6 +272,30 @@ export function baseParse(pugCode: string) {
 		}
 		codeGen.addText('"');
 	}
+
+	function collectContentfulIndents(tokens: pugLex.Token[]): pugLex.IndentToken[] {
+        const contentfulIndents: pugLex.IndentToken[] = [];
+
+        for (let i = 0; i < tokens.length; i++) {
+            const currentToken = tokens[i];
+
+            if (currentToken.type === 'indent') {
+                const hasLength = currentToken.loc.end.column - currentToken.loc.start.column > 0;
+                const isOnlyWhitespaceLine = shared.getLineText(pugTextDocument, currentToken.loc.end.line - 2).trim() === '';
+
+                if (hasLength && isOnlyWhitespaceLine) {
+					const newToken = {...currentToken};
+
+                    newToken.loc.start.line = newToken.loc.start.line - 2;
+                    newToken.loc.end.line = newToken.loc.end.line - 2;
+
+                    contentfulIndents.push(newToken);
+                }
+            }
+        }
+        return contentfulIndents;
+    }
+
 	function collectEmptyLineEnds(tokens: pugLex.Token[]) {
 
 		const ends: number[] = [];

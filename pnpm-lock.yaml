@@ -142,6 +142,7 @@ importers:
       '@volar/transforms': 0.38.1
       pug-lexer: ^5.0.1
       pug-parser: ^6.0.0
+      void-elements: ^3.1.0
       vscode-html-languageservice: ^5.0.0
       vscode-languageserver-textdocument: ^1.0.4
       vscode-languageserver-types: ^3.17.1
@@ -152,6 +153,7 @@ importers:
       '@volar/transforms': link:../transforms
       pug-lexer: 5.0.1
       pug-parser: 6.0.0
+      void-elements: 3.1.0
       vscode-languageserver-textdocument: 1.0.5
       vscode-languageserver-types: 3.17.1
     devDependencies:
@@ -5189,7 +5191,7 @@ packages:
     dev: true
 
   /void-elements/3.1.0:
-    resolution: {integrity: sha1-YU9/v42AHwu18GYfWy9XhXUOTwk=}
+    resolution: {integrity: sha512-Dhxzh5HZuiHQhbvTW9AMetFfBHDMYpo23Uo9btPXgdYP+3T5S+p+jgNy7spra+veYhBP2dCSgxR/i2Y02h5/6w==}
     engines: {node: '>=0.10.0'}
     dev: false
 
