@@ -18,6 +18,7 @@ export function baseParse(pugCode: string) {
 		line: number,
 		column: number,
 		filename: string,
+		src: string,
 	} | undefined;
 	let fullPugTagEnd: number;
 	let emptyLineEnds: ReturnType<typeof collectEmptyLineEnds>;
@@ -86,7 +87,7 @@ export function baseParse(pugCode: string) {
 
         codeGen.addText('\n' + (' '.repeat(contentfulIndents[0].val || 0)));
 
-        const htmlEndRange = codeGen.getText().length;
+        const htmlEndRange = codeGen.getText().length - 1;
 
         codeGen.addMapping2({
             data: undefined,
@@ -110,7 +111,7 @@ export function baseParse(pugCode: string) {
         }
         codeGen.addText('\n');
 
-        const htmlEndRange = codeGen.getText().length;
+        const htmlEndRange = codeGen.getText().length - 1;
 
         codeGen.addMapping2({
             data: undefined,
