@@ -4,7 +4,6 @@
 		"noEmit": true,
 	},
 	"include": [
-		"extensions/*/src",
 		"packages/*/src",
 		"packages/*/src/**/*.json",
 	],
