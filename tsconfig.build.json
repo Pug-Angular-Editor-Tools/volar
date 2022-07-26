@@ -1,4 +1,5 @@
 {
+	"extends": "./tsconfig.base.json",
 	"compilerOptions": {
 		"outDir": "out",
 		"rootDir": "src",
@@ -10,5 +11,7 @@
 		"node_modules",
 		".vscode-test",
 	],
-	"files": []
+	"files": [
+		"src/index.ts"
+	]
 }
