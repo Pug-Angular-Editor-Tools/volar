@@ -5,50 +5,30 @@ import { CodeGen } from '@volar/code-gen';
 import * as pugLex from 'pug-lexer';
 
 const pugParser = require('pug-parser');
+const pugRuntime = require('pug-runtime');
 const voidElements = require('void-elements');
+
+const missingCommaRegex = /(&quot;|')\n\s+\[.*?]=\1/;
 
 export function baseParse(pugCode: string) {
 
 	const fileName = 'foo.pug';
-	const pugTextDocument = TextDocument.create(shared.fsPathToUri('foo.pug'), 'jade', 0, pugCode);
-	const codeGen = new CodeGen<{ isEmptyTagCompletion: boolean; } | undefined>();
-	let error: {
-		code: string,
-		msg: string,
-		line: number,
-		column: number,
-		filename: string,
-		src: string,
-	} | undefined;
+	const pugTextDocument = TextDocument.create(shared.fsPathToUri(fileName), 'jade', 0, pugCode);
+	const codeGen = new CodeGen<{isEmptyTagCompletion: boolean; text: string} | undefined>();
+	let error: Error;
 	let fullPugTagEnd: number;
-	let emptyLineEnds: ReturnType<typeof collectEmptyLineEnds>;
 	let attrsBlocks: ReturnType<typeof collectAttrsBlocks>;
 	let ast: Node | undefined;
 
-    let contentfulIndents: pugLex.IndentToken[];
-    let emptyLineEndsLinePositions: number[];
+	let emptyLineEndsLineTokens: pugLex.Loc[];
 
 	try {
-		const tokens = pugLex(pugCode, { filename: fileName });
-
-		emptyLineEnds = collectEmptyLineEnds(tokens);
-        emptyLineEndsLinePositions = emptyLineEnds.map(offset => pugTextDocument.positionAt(offset).line);
-
+		const tokens = pugLex(pugCode, {filename: fileName});
+		emptyLineEndsLineTokens = collectNewlinesLoc(tokens);
 		attrsBlocks = collectAttrsBlocks(tokens);
 
-        contentfulIndents = collectContentfulIndents(tokens);
-
-		ast = pugParser(tokens, { filename: fileName, src: pugCode }) as Node;
+		ast = pugParser(tokens, {filename: fileName, src: pugCode}) as Node;
 		visitNode(ast, undefined, undefined);
-
-        contentfulIndents.forEach(() => {
-            addIndents();
-            contentfulIndents.shift();
-        });
-        emptyLineEndsLinePositions.forEach(() => {
-            addNewlines();
-            emptyLineEndsLinePositions.shift();
-        });
 
 		codeGen.addCode(
 			'',
@@ -64,8 +44,8 @@ export function baseParse(pugCode: string) {
 		const _error = e as NonNullable<typeof error>;
 		error = {
 			..._error,
-			line: _error.line - 1,
-			column: _error.column - 1,
+			line: _error.line - 1 || 0,
+			column: _error.column - 1 || 0,
 		};
 	};
 
@@ -80,104 +60,258 @@ export function baseParse(pugCode: string) {
 		ast,
 	};
 
-    function addIndents() {
-        const startOffset = pugTextDocument.offsetAt({ line: contentfulIndents[0].loc.start.line, character: contentfulIndents[0].loc.start.column });
-        const endOffset = pugTextDocument.offsetAt({ line: contentfulIndents[0].loc.end.line, character: contentfulIndents[0].loc.end.column });
-        const htmlStartRange = codeGen.getText().length;
+	function addNewlinesByToken(token: pugLex.Loc) {
+		const startOffset = getDocOffset(token.start.line, token.start.column);
+		const endOffset = getDocOffset(token.end.line, token.end.column);
+		const htmlStartRange = codeGen.getText().length;
 
-        codeGen.addText('\n' + (' '.repeat(contentfulIndents[0].val || 0)));
-
-        const htmlEndRange = codeGen.getText().length - 1;
-
-        codeGen.addMapping2({
-            data: undefined,
-            sourceRange: {
-                start: startOffset,
-                end: endOffset,
-            },
-            mappedRange: {
-                start: htmlStartRange,
-                end: htmlEndRange,
-            },
-            mode: SourceMap.Mode.Expand,
-        });
-    }
-    function addNewlines() {
-        const offset = getDocOffset(emptyLineEndsLinePositions[0] + 1, 0 + 1);
-        const htmlStartRange = codeGen.getText().length;
-
-        if (!(codeGen.getText().length === 0 || codeGen.getText().endsWith('\n'))) {
+		// Angular will treat several blank lines as one node so we only need one
+        if (!codeGen.getText().endsWith('\n\n')) {
+            if ((codeGen.getText().length !== 0 && !codeGen.getText().endsWith('\n'))) {
+                codeGen.addText('\n');
+            }
             codeGen.addText('\n');
         }
-        codeGen.addText('\n');
 
-        const htmlEndRange = codeGen.getText().length - 1;
+		const htmlEndRange = codeGen.getText().length - 1;
 
-        codeGen.addMapping2({
-            data: undefined,
-            sourceRange: {
-                start: offset,
-                end: offset,
+		codeGen.addMapping2({
+            data: {
+                text: 'newline',
+                isEmptyTagCompletion: false,
             },
-            mappedRange: {
-                start: htmlStartRange,
-                end: htmlEndRange,
-            },
-            mode: SourceMap.Mode.Expand,
-        });
-    }
-	function visitNode(node: Node, next: Node | undefined, parent: Node | undefined) {
-		if (node.type === 'Block') {
-			for (let i = 0; i < node.nodes.length; i++) {
-				visitNode(node.nodes[i], node.nodes[i + 1], node);
-			}
+			sourceRange: {
+				start: startOffset,
+				end: endOffset,
+			},
+			mappedRange: {
+				start: htmlStartRange,
+				end: htmlEndRange,
+			},
+			mode: SourceMap.Mode.Expand,
+		});
+	}
+
+	function extractBlockFromContainer(node: ContainerNode) {
+		const _node = node as ContainerNode;
+		let blockNode: BlockNode | undefined;
+		switch ( _node.type ) {
+			case 'Conditional':
+				blockNode = _node.consequent;
+				break;
+			case 'Mixin':
+			case 'Each':
+			case 'Case':
+				blockNode = _node.block;
+				break;
+			case 'Block':
+			case 'NamedBlock':
+				blockNode = _node as BlockNode;
+				break;
 		}
-		// TODO: Merge into one array
-        while (node.line >= contentfulIndents[0]?.loc.start.line) {
-            addIndents();
-            contentfulIndents.shift();
-        }
-        while (node.line >= emptyLineEndsLinePositions[0]) {
-            addNewlines();
-            emptyLineEndsLinePositions.shift();
-        }
 
-		if (node.type === 'Tag') {
+		return blockNode;
+	}
+	function isContainerNode(node: Node): boolean {
+		return ['Block', 'Case', 'Conditional', 'Each', 'Mixin', 'NamedBlock'].includes( node.type )
+	}
 
-			const pugTagRange = getDocRange(node.line, node.column, node.name.length);
+	function visitNewlines(node: Node) {
+		const nodeOffset = 'column' in node ? getDocOffset(node.line, node.column) : getDocOffset(node.line, 0);
+		let nextEmptyLineToken = emptyLineEndsLineTokens[0]
+		while (nextEmptyLineToken && nodeOffset >= getDocOffset(nextEmptyLineToken.start.line, nextEmptyLineToken.start.column)) {
+			addNewlinesByToken(nextEmptyLineToken);
+			emptyLineEndsLineTokens.shift();
+			nextEmptyLineToken = emptyLineEndsLineTokens[0]
+		}
+	}
 
-			const fullHtmlStart = codeGen.getText().length;
-			fullPugTagEnd = pugTagRange.end;
+	function visitTagNodes(node: TagNode , next: Node | undefined, parent: Node | undefined) {
+		const pugTagRange = getDocRange(node.line, node.column, node.name.length);
 
-            const selfClosing = Boolean(voidElements[node.name]);
-			addStartTag(node, selfClosing);
-			if (!selfClosing) {
-				visitNode(node.block, next, parent);
-				addEndTag(node, next, parent);
-			}
-			const fullHtmlEnd = codeGen.getText().length;
+		const fullHtmlStart = codeGen.getText().length;
+		fullPugTagEnd = pugTagRange.end;
+
+		const selfClosing = Boolean(voidElements[node.name]) || node.selfClosing;
+		addStartTag(node, selfClosing);
+		if (!selfClosing) {
+			visitNode(node.block, next, parent);
+			addEndTag(node, next, parent);
+		}
+		const fullHtmlEnd = codeGen.getText().length;
+
+		codeGen.addMapping2({
+			data: { text: 'tag', isEmptyTagCompletion: false },
+			sourceRange: {
+				start: pugTagRange.start,
+				end: fullPugTagEnd,
+			},
+			mappedRange: {
+				start: fullHtmlStart,
+				end: fullHtmlEnd,
+			},
+			mode: SourceMap.Mode.Offset,
+		});
+	}
+
+	function handleInterpolations(node: TextNode, interpolations: RegExpMatchArray[]) {
+		for ( const interpolationMatch of interpolations ) {
+			const interpolationContent = interpolationMatch[1]; // 0: {{text}}, 1: text
+			const matchIndex = interpolationMatch.index || 0;
+			// +2 to compensate for {{
+			const startOffset = getDocOffset( node.line, node.column ) + matchIndex + 2;
+
+			const htmlLength = codeGen.getText().length;
+
+			const htmlInterpolationStart = matchIndex + htmlLength;
+
 			codeGen.addMapping2({
-				data: undefined,
+				data: { text: 'interpolation', isEmptyTagCompletion: false },
 				sourceRange: {
-					start: pugTagRange.start,
-					end: fullPugTagEnd,
+					start: startOffset,
+					end: startOffset + interpolationContent.length,
 				},
 				mappedRange: {
-					start: fullHtmlStart,
-					end: fullHtmlEnd,
+					// +2 for }}
+					start: htmlInterpolationStart + 2,
+					end: htmlInterpolationStart + interpolationContent.length + 2
 				},
 				mode: SourceMap.Mode.Totally,
 			});
-		}
-		else if (node.type === 'Text') {
-			codeGen.addCode(
-				node.val,
-				getDocRange(node.line, node.column, node.val.length),
-				SourceMap.Mode.Offset,
-				undefined,
-			);
+			// -2 for ]]
+            handleFunctionCalls(interpolationContent, startOffset, startOffset - htmlLength - 2)
 		}
 	}
+
+	function visitTextNodes(node: TextNode) {
+		const text = node.val;
+		const interpolationPattern = /\{\{(.*?)\}\}/g;
+		const interpolations = [...text.matchAll(interpolationPattern)];
+
+		if ( interpolations?.length > 0 ) {
+			handleInterpolations(node, interpolations)
+		}
+
+		codeGen.addCode( node.val, getDocRange( node.line, node.column, node.val.length ), SourceMap.Mode.Offset, {
+			text: 'text',
+			isEmptyTagCompletion: false,
+		});
+		// The space comes from between the tag and the text: `span [here] text`
+		fullPugTagEnd += node.val.length + ' '.length;
+	}
+
+	function handleFunctionCalls(text: string, startOffset: number, htmlDifference: number) {
+		const callParamsPattern = /\((?<completeContent>.*)\)|\((?<incompleteContent>.*)$/g;
+		const callParams = [...text.matchAll(callParamsPattern)]
+			.reduce((acc, match) => {
+				if (!match.groups) {
+					return acc;
+				}
+
+				const {completeContent, incompleteContent} = match.groups;
+				acc.push({
+					index: match.index!,
+					// completeContent can be '' which is falsy
+					content: (completeContent !== undefined)
+						? completeContent
+						: incompleteContent
+				});
+
+				return acc;
+
+			}, [] as {content: string, index: number}[]);
+
+        callParams.forEach( callParam => {
+            const matchIndex = callParam.index || 0;
+            const callParamContent = callParam.content;
+            const paramStart = startOffset + matchIndex;
+
+            const start = paramStart + 1;
+            const end = start + callParamContent.length;
+
+            codeGen.addMapping2( {
+                data: { text: 'callparams', isEmptyTagCompletion: false },
+                sourceRange: {
+                    start,
+                    end,
+                },
+                mappedRange: {
+                    start: start + htmlDifference,
+                    end: end + htmlDifference,
+                },
+                mode: SourceMap.Mode.Totally,
+            });
+
+            handleFunctionCalls(callParamContent, startOffset + matchIndex + 1, htmlDifference)
+        })
+    }
+
+	function visitNode(node: Node, next: Node | undefined, parent: Node | undefined) {
+		if (isContainerNode(node)) {
+			const blockNode = extractBlockFromContainer(node as ContainerNode);
+			if (!blockNode) {
+				return;
+			}
+
+			for (let i = 0; i < blockNode.nodes.length; i++) {
+				visitNode(blockNode.nodes[i], blockNode.nodes[i + 1], blockNode);
+			}
+		}
+
+		visitNewlines(node);
+
+		if (node.type === 'Tag') {
+			visitTagNodes(node, next, parent);
+		}
+		else if (node.type === 'Text') {
+			visitTextNodes(node)
+		}
+	}
+
+	function handleAttributes(node: TagNode) {
+		const noTitleAttrs = node.attrs.filter(attr => !attr.mustEscape && attr.name !== 'class');
+		const noTitleClassAttrs = node.attrs.filter(attr => !attr.mustEscape && attr.name === 'class');
+		const attrsBlock = attrsBlocks.get(getDocOffset(node.line, node.column)); // support attr auto-complete in empty space
+
+		addClassesOrStyles(noTitleClassAttrs, 'class');
+
+		for (const attr of noTitleAttrs) {
+			codeGen.addText(' ');
+			codeGen.addText(attr.name);
+			if (typeof attr.val !== 'boolean') {
+				codeGen.addText('=');
+                codeGen.addCode( attr.val, getDocRange( attr.line, attr.column, attr.val.length ), SourceMap.Mode.Offset, {
+                    text: 'attrval',
+                    isEmptyTagCompletion: false,
+                });
+                fullPugTagEnd += attr.val.replace(/'|"/g, '').length + '#'.length; // For now we're assuming these are only ids
+			}
+		}
+
+		if (attrsBlock) {
+            codeGen.addText(' ');
+            const attributePattern = /([^,\s"']*?)=('|")(.*?)\2/g
+            const attributes = [...attrsBlock.text.matchAll(attributePattern)];
+
+            for ( const attr of attributes ) {
+                handleAttributeFunctionCalls(attr, attrsBlock.offset, codeGen.getText().length - attrsBlock.offset)
+            }
+
+            // handleFunctionCalls(text, startOffset, htmlDifference)
+            codeGen.addCode(attrsBlock.text, { start: attrsBlock.offset, end: attrsBlock.offset + attrsBlock.text.length }, SourceMap.Mode.Offset, {
+                text: 'attrblock',
+                isEmptyTagCompletion: false,
+            });
+            fullPugTagEnd += '('.length + attrsBlock.text.length + ')'.length;
+		}
+	}
+
+    function handleAttributeFunctionCalls(attribute: RegExpMatchArray, startOffset: number, htmlDifference: number) {
+        const [_whole, key, _quote, value] = attribute;
+        const keyStart = pugTextDocument.getText().substring(startOffset).indexOf(key)
+        handleFunctionCalls(value, startOffset + keyStart + key.length + '=\''.length, htmlDifference)
+    }
+
 	function addStartTag(node: TagNode, selfClosing: boolean) {
 		codeGen.addCode(
 			'',
@@ -199,36 +333,9 @@ export function baseParse(pugCode: string) {
 			codeGen.addText(node.name);
 		}
 
-		const noTitleAttrs = node.attrs.filter(attr => !attr.mustEscape && attr.name !== 'class');
-		const noTitleClassAttrs = node.attrs.filter(attr => !attr.mustEscape && attr.name === 'class');
-		const attrsBlock = attrsBlocks.get(getDocOffset(node.line, node.column)); // support attr auto-complete in empty space
+		handleAttributes(node);
 
-		addClassesOrStyles(noTitleClassAttrs, 'class');
-
-		for (const attr of noTitleAttrs) {
-			codeGen.addText(' ');
-			codeGen.addText(attr.name);
-			if (typeof attr.val !== 'boolean') {
-				codeGen.addText('=');
-				codeGen.addCode(
-					attr.val,
-					getDocRange(attr.line, attr.column, attr.val.length),
-					SourceMap.Mode.Offset,
-					undefined
-				);
-			}
-		}
-
-		if (attrsBlock) {
-			codeGen.addText(' ');
-			codeGen.addCode(
-				attrsBlock.text,
-				{ start: attrsBlock.offset, end: attrsBlock.offset + attrsBlock.text.length },
-				SourceMap.Mode.Offset,
-				undefined,
-			);
-		}
-
+        codeGen.addText(" ")
 		if (selfClosing) {
 			codeGen.addText(' />');
 		}
@@ -250,10 +357,11 @@ export function baseParse(pugCode: string) {
 			nextStart = pugCode.length;
 		}
 		if (nextStart !== undefined) {
-			fullPugTagEnd = nextStart;
+			// fullPugTagEnd = nextStart;
 		}
 		codeGen.addText(`</${node.name}>`);
 	}
+
 	function addClassesOrStyles(attrs: TagNode['attrs'], attrName: string) {
 		if (!attrs.length) return;
 		codeGen.addText(' ');
@@ -269,104 +377,73 @@ export function baseParse(pugCode: string) {
 					SourceMap.Mode.Offset,
 					undefined
 				);
+				// . is for classes
+                fullPugTagEnd += attr.val.replace(/'|"/g, '').length + '.'.length;
 			}
 		}
 		codeGen.addText('"');
 	}
 
-	function collectContentfulIndents(tokens: pugLex.Token[]): pugLex.IndentToken[] {
-        const contentfulIndents: pugLex.IndentToken[] = [];
+	function collectNewlinesLoc(tokens: pugLex.Token[]): pugLex.Loc[] {
+		const ends: pugLex.Loc[] = [];
 
-        for (let i = 0; i < tokens.length; i++) {
-            const currentToken = tokens[i];
+		for (let i = 0; i < tokens.length; i++) {
+			const token = tokens[i];
+			const nextToken = tokens?.[i + 1];
+			const prevToken = tokens?.[i - 1];
+			// Is indent needed? 2022-08-07
+            if (token.type === 'newline' || token.type === 'outdent' || token.type === 'indent') {
+                // const totalNumberOfNewlines = nextToken.loc.end.line - prevToken.loc.start.line;
+                const firstLine = prevToken.loc.end.line + 1 || 0;
+                const lastLine = nextToken.loc.start.line - 1 || token.loc.end.line;
 
-            if (currentToken.type === 'indent') {
-                const hasLength = currentToken.loc.end.column - currentToken.loc.start.column > 0;
-                const isOnlyWhitespaceLine = shared.getLineText(pugTextDocument, currentToken.loc.end.line - 2).trim() === '';
-
-                if (hasLength && isOnlyWhitespaceLine) {
-					const newToken = {...currentToken};
-
-                    newToken.loc.start.line = newToken.loc.start.line - 2;
-                    newToken.loc.end.line = newToken.loc.end.line - 2;
-
-                    contentfulIndents.push(newToken);
+                for ( let line = firstLine; line <= lastLine; line++ ) {
+                    ends.push({
+                        // One indexed
+                        start: {line: line, column: 1},
+                        end: {line: line, column: 1},
+                    });
                 }
+
             }
-        }
-        return contentfulIndents;
-    }
-
-	function collectEmptyLineEnds(tokens: pugLex.Token[]) {
-
-		const ends: number[] = [];
-
-		for (const token of tokens) {
-			if (token.type === 'newline' || token.type === 'outdent') {
-				let currentLine = token.loc.start.line - 2;
-				let prevLine = shared.getLineText(pugTextDocument, currentLine);
-				while (prevLine.trim() === '') {
-					ends.push(pugTextDocument.offsetAt({ line: currentLine + 1, character: 0 }) - 1);
-					if (currentLine <= 0) break;
-					currentLine--;
-					prevLine = shared.getLineText(pugTextDocument, currentLine);
-				}
-			}
 		}
 
-		return ends.sort((a, b) => a - b);
+		return ends;
 	}
-	function collectAttrsBlocks(tokens: pugLex.Token[]) {
 
+	function collectAttrsBlocks(tokens: pugLex.Token[]) {
 		const blocks = new Map<number, { offset: number, text: string; }>();
 
 		for (let i = 0; i < tokens.length; i++) {
 			const token = tokens[i];
 			if (token.type === 'start-attributes') {
-
 				let tagStart: pugLex.Token = token;
 
+				// Iterate through all previous nodes
 				for (let j = i - 1; j >= 0; j--) {
-
 					const prevToken = tokens[j];
 
-					if (
-						prevToken.type === 'newline'
-						|| prevToken.type === 'indent'
-						|| prevToken.type === 'outdent'
-						|| prevToken.type === ':'
-					) break;
+					if (prevToken.type === 'newline' || prevToken.type === 'indent' || prevToken.type === 'outdent' || prevToken.type === ':') {
+						break;
+					}
 
 					tagStart = prevToken;
 
-					if (prevToken.type === 'tag')
+					if (prevToken.type === 'tag') {
 						break;
+					}
 				}
 
 				let prevToken: pugLex.Token = token;
 				let text = '';
 
+				// Find previous token, add all indents
 				for (i++; i < tokens.length; i++) {
-
 					const attrToken = tokens[i];
 					addPrevSpace(attrToken);
 
 					if (attrToken.type === 'attribute') {
-						let attrText = pugCode.substring(
-							getDocOffset(attrToken.loc.start.line, attrToken.loc.start.column),
-							getDocOffset(attrToken.loc.end.line, attrToken.loc.end.column),
-						);
-						if (typeof attrToken.val === 'string' && attrText.indexOf('=') >= 0) {
-							let valText = attrToken.val;
-							if (valText.startsWith('`') && valText.endsWith('`')) {
-								valText = `"${valText.slice(1, -1)}"`;
-							}
-							valText = valText.replace(/ \\\n/g, '//\n');
-							text += attrText.substring(0, attrText.lastIndexOf(attrToken.val)) + valText;
-						}
-						else {
-							text += attrText;
-						}
+						text += checkPotentiallyMissingCommas(attrToken.val, attrToken);
 					}
 					else if (attrToken.type === 'end-attributes') {
 						blocks.set(getDocOffset(tagStart.loc.start.line, tagStart.loc.start.column), {
@@ -390,6 +467,28 @@ export function baseParse(pugCode: string) {
 
 		return blocks;
 	}
+
+	function checkPotentiallyMissingCommas(value: string | boolean, attrToken: pugLex.AttributeToken) {
+		let strippedValue = value;
+		if (typeof value === 'string') {
+			strippedValue = value.slice(1, -1).replace(/ \\\n/g, '//\n');
+		}
+
+		const escaped = pugRuntime.attr(attrToken.name, strippedValue, true, true).trimLeft();
+
+		if (missingCommaRegex.test(escaped)) {
+			error = {
+				code: 'PUG:SUSPECTED_MISSING_COMMA',
+				msg: `Suspect missing comma between attrs: "${escaped.replace('\n', ' ')}"`,
+				line: attrToken.loc.start.line,
+				column: attrToken.loc.start.column,
+				filename: fileName,
+				src: attrToken.name,
+			};
+		}
+		return escaped;
+	}
+
 	function getDocOffset(pugLine: number, pugColumn: number) {
 		return pugTextDocument.offsetAt({ line: pugLine - 1, character: pugColumn - 1 });
 	}
@@ -403,7 +502,8 @@ export function baseParse(pugCode: string) {
 	}
 }
 
-export type Node = BlockNode | TagNode | TextNode | CommentNode | BlockCommentNode;
+export type Node = BlockNode | TagNode | TextNode | CommentNode | BlockCommentNode | ConditionalNode | EachNode | MixinNode | CaseNode;
+export type ContainerNode = BlockNode | CaseNode | ConditionalNode | EachNode | MixinNode | NamedBlockNode;
 
 export interface BlockNode {
 	type: 'Block',
@@ -454,3 +554,46 @@ export interface BlockCommentNode {
 	line: number,
 	column: number,
 }
+
+export interface ConditionalNode {
+	type: 'Conditional',
+	consequent: BlockNode,
+	line: number,
+	column: number,
+}
+
+export interface EachNode {
+	type: 'Each',
+	block: BlockNode,
+	line: number,
+	column: number,
+}
+export interface MixinNode {
+	type: 'Mixin',
+	block?: BlockNode,
+	line: number,
+	column: number,
+}
+
+export interface NamedBlockNode {
+	type: 'NamedBlock',
+	nodes: Node[],
+	line: number,
+	column: number,
+}
+
+export interface CaseNode {
+	type: 'Case',
+	block: BlockNode,
+	line: number,
+	column: number,
+}
+
+type Error = {
+	code: string,
+	msg: string,
+	line: number,
+	column: number,
+	filename: string,
+	src: string,
+} | undefined;

@@ -1,6 +1,6 @@
 {
 	"name": "@volar/preview",
-	"version": "0.38.1",
+	"version": "0.38.1-angular",
 	"license": "MIT",
 	"files": [
 		"bin",
