@@ -16,7 +16,7 @@
 		"noUnusedLocals": true,
 		"baseUrl": "./",
 		"paths": {
-			"@volar/*": [
+			"@pug-editor-tools/*": [
 				"packages/*/src"
 			]
 		},
