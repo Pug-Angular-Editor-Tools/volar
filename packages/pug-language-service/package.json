@@ -1,5 +1,5 @@
 {
-	"name": "@volar/pug-language-service",
+	"name": "@pug-editor-tools/pug-language-service",
 	"version": "0.38.1-angular",
 	"main": "out/index.js",
 	"license": "MIT",
@@ -9,17 +9,17 @@
 	],
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/johnsoncodehk/volar.git",
+		"url": "https://github.com/Pug-Angular-Editor-Tools/volar.git",
 		"directory": "packages/pug-language-service"
 	},
 	"devDependencies": {
 		"vscode-html-languageservice": "^5.0.0"
 	},
 	"dependencies": {
-		"@volar/code-gen": "0.38.1-angular",
-		"@volar/shared": "0.38.1-angular",
-		"@volar/source-map": "0.38.1-angular",
-		"@volar/transforms": "0.38.1-angular",
+		"@volar/code-gen": "0.38.1",
+		"@volar/shared": "0.38.1",
+		"@volar/source-map": "0.38.1",
+		"@volar/transforms": "0.38.1",
 		"pug-lexer": "^5.0.1",
 		"pug-parser": "^6.0.0",
 		"pug-runtime": "^3.0.1",
