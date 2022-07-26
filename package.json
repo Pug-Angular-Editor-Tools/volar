@@ -21,7 +21,7 @@
 		"vitest": "latest",
 		"vscode-html-languageservice": "^5.0.0"
 	},
-	"name": "@pug-editor-tools/pug-language-service",
+	"name": "pug-angular-language-service",
 	"version": "0.38.1-angular",
 	"main": "out/index.js",
 	"license": "MIT",
