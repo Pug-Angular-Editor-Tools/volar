@@ -1,8 +1,7 @@
 {
 	"npmClient": "pnpm",
 	"packages": [
-		"extensions/*",
-		"packages/*"
+		"src"
 	],
 	"version": "0.38.1-angular"
 }

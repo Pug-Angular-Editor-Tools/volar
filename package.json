@@ -1,5 +1,4 @@
 {
-	"private": true,
 	"scripts": {
 		"build": "tsc -b tsconfig.build.json",
 		"watch": "npm run build && npm run watch:base",
@@ -19,6 +18,32 @@
 		"@vscode/test-web": "latest",
 		"typescript": "latest",
 		"vite": "latest",
-		"vitest": "latest"
+		"vitest": "latest",
+		"vscode-html-languageservice": "^5.0.0"
+	},
+	"name": "@pug-editor-tools/pug-language-service",
+	"version": "0.38.1-angular",
+	"main": "out/index.js",
+	"license": "MIT",
+	"files": [
+		"out/**/*.js",
+		"out/**/*.d.ts"
+	],
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/Pug-Angular-Editor-Tools/volar.git",
+		"directory": "packages/pug-language-service"
+	},
+	"dependencies": {
+		"@volar/code-gen": "0.38.1",
+		"@volar/shared": "0.38.1",
+		"@volar/source-map": "0.38.1",
+		"@volar/transforms": "0.38.1",
+		"pug-lexer": "^5.0.1",
+		"pug-parser": "^6.0.0",
+		"pug-runtime": "^3.0.1",
+		"void-elements": "^3.1.0",
+		"vscode-languageserver-textdocument": "^1.0.4",
+		"vscode-languageserver-types": "^3.17.1"
 	}
 }

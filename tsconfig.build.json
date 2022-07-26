@@ -1,18 +1,14 @@
 {
-	"files": [],
-	"include": [],
-	"references": [
-		{
-			"path": "./extensions/vscode-alpine-language-features/tsconfig.build.json"
-		},
-		{
-			"path": "./extensions/vscode-vue-language-features/tsconfig.build.json"
-		},
-		{
-			"path": "./packages/typescript-vue-plugin/tsconfig.build.json"
-		},
-		{
-			"path": "./packages/vue-tsc/tsconfig.build.json"
-		},
-	]
+	"compilerOptions": {
+		"outDir": "out",
+		"rootDir": "src",
+	},
+	"include": [
+		"src"
+	],
+	"exclude": [
+		"node_modules",
+		".vscode-test",
+	],
+	"files": []
 }
